@@ -1,7 +1,6 @@
 from random import random
 import math
-
-number_of_solutions = 100
+import numpy as np
 
 
 class Point:
@@ -81,12 +80,221 @@ class Checkpoint(Unit):
         return
 
 
+class Pod(Unit):
+    def __init__(self, x_in, y_in, vx_in, vy_in, angle_in, id_in, radius_in, num_targets_in, laps_in):
+        super(Pod, self).__init__(x_in, y_in, vx_in, vy_in, id_in, radius_in, num_targets_in)
+        self.angle: float = angle_in
+        self.checkpoint = None
+        self.checked: int = 0
+        self.timeout: int = 100
+        self.partner = None
+        self.shield: bool = False
+        self.number_laps: int = laps_in
+        self.solutions = []
+        self.fitness: float = 0
+        return
+
+    def add_partner(self, pod):
+        self.partner = pod
+        return
+
+    def get_angle(self, point):
+        distance = self.distance(point)
+        dx = (point.x - self.x) / distance
+        dy = (point.y - self.y) / distance
+        theta: float = math.acos(dx)
+        theta = math.degrees(theta)
+        if dy < 0:
+            theta = 360 - theta
+        return theta
+
+    def difference_angle(self, point):
+        theta = self.get_angle(point)
+        right = self.angle - theta if self.angle <= theta else 360.0 - self.angle + theta
+        left = self.angle - theta if self.angle <= theta else self.angle + 360.0 - theta
+        if right < left:
+            return right
+        else:
+            return -left
+
+    def rotate(self, point):
+        theta = self.get_angle(point)
+        if theta > 18.0:
+            theta = 18
+        elif theta < -18.0:
+            theta = -18
+        self.angle += theta
+        if self.angle >= 360.0:
+            self.angle = self.angle - 360.0
+        elif self.angle < 0.0:
+            self.angle += 360.0
+        return
+
+    def boost(self, thrust):
+        if self.shield:
+            return
+        theta_radians = math.radians(self.angle)
+        self.vx += math.cos(theta_radians) * thrust
+        self.vy += math.sin(theta_radians) * thrust
+        return
+
+    def move(self, t):
+        self.x += self.vx * t
+        self.y += self.vy * t
+        return
+
+    def end(self, checkpoints):
+        self.x = round(self.x)
+        self.y = round(self.y)
+        self.vx = math.trunc(self.vx * 0.85)
+        self.vy = math.trunc(self.vy * 0.85)
+        self.timeout -= 1
+        self.fitness = self.score(checkpoints)
+        return self.fitness
+
+    def play(self, point, thrust, checkpoints):
+        self.fitness = 0
+        self.checked = 0
+        self.rotate(point)
+        self.boost(thrust)
+        self.move(1.0)
+        self.end(checkpoints)
+        return
+
+    def bounce(self, unit):
+        if isinstance(unit, Checkpoint):
+            self.bounce_with_checkpoint()
+        else:
+            mass1: float = 10 if self.shield else 1
+            mass2: float = 10 if unit.shield else 1
+            mass_coefficient: float = (mass1 + mass2) / (mass1 * mass2)
+            new_x: float = self.x - unit.x
+            new_y: float = self.y - unit.y
+            new_xy_squared: float = new_x ** 2 + new_y ** 2
+            dvx: float = self.vx - unit.vx
+            dvy: float = self.vy - unit.vy
+            product: float = new_x * dvx + new_y * dvy
+            fx: float = (new_x * product) / (new_xy_squared * mass_coefficient)
+            fy: float = (new_y * product) / (new_xy_squared * mass_coefficient)
+            self.vx -= fx / mass1
+            self.vy -= fy / mass1
+            unit.vx += fx / mass2
+            unit.vy += fy / mass2
+            impulse: float = math.sqrt(fx ** 2 + fy ** 2)
+            if impulse < 120:
+                fx = fx * 120.0 / impulse
+                fy = fy * 120.0 / impulse
+            self.vx -= fx / mass1
+            self.vy -= fy / mass1
+            unit.vx += fx / mass2
+            unit.vy += fy / mass2
+        return
+
+    def bounce_with_checkpoint(self):
+        self.next_target_id += 1
+        if self.next_target_id == self.num_targets:
+            self.next_target_id = 0
+        self.timeout = 100
+        self.checked += 1
+        return
+
+    def score(self, checkpoints):
+        self.fitness = (self.checked * 50000 - self.distance(checkpoints[self.next_target_id]))
+        return self.fitness
+
+    def output(self, move):
+        theta: float = self.angle + move.angle
+        if theta >= 360.0:
+            theta = theta - 360.0
+        elif theta < 0.0:
+            theta += 360.0
+        theta = math.radians(theta)
+        px: float = self.x + math.cos(theta) * 10000.0
+        py: float = self.y + math.sin(theta) * 10000.0
+        print(str(round(px)) + " " + str(round(py)) + " " + str(move.thrust))
+        return
+
+    def autopilot_point(self, target, next_target):
+        # Figure out the desired x & y
+        # Set up vectors with the current target as the origin
+        target_pod_x = self.x - target.x
+        target_pod_y = self.y - target.y
+        target_pod_vect = np.array([target_pod_x, target_pod_y])
+        target_pod_vect_mag = math.sqrt(target_pod_x ** 2 + target_pod_y ** 2)
+        # Set up vectors with the current target and the next target
+        target_next_x = next_target.x - target.x
+        target_next_y = next_target.y - target.y
+        target_next_vect = np.array([target_next_x, target_next_y])
+        target_next_vect_mag = math.sqrt(target_next_x ** 2 + target_next_y ** 2)
+        # Get the bisecting vector
+        unscaled_desired_vect_x = target_pod_vect_mag * target_next_vect[0] + target_next_vect_mag * target_pod_vect[0]
+        unscaled_desired_vect_y = target_pod_vect_mag * target_next_vect[1] + target_next_vect_mag * target_pod_vect[1]
+        unscaled_desired_vect_theta = math.atan2(unscaled_desired_vect_y, unscaled_desired_vect_x)
+        desired_x = 300 * math.cos(unscaled_desired_vect_theta) + target.x
+        desired_y = 300 * math.sin(unscaled_desired_vect_theta) + target.y
+        # Create point from desired x & y
+        target_point = Point(self.x + desired_x - self.x - self.vx, self.y + desired_y - self.y - self.vy)
+        return target_point
+
+    def autopilot_thrust(self, point, style):
+        # Calculate the thrust
+        distance = self.distance(point)
+        scale_factor = 100 / math.pi
+        stretch_factor = 0.002
+        far_away = 2000
+        approach_dist = 1200
+        base = 45
+        if distance > far_away:
+            thrust = 100
+        elif distance > approach_dist:
+            if style == 0:
+                thrust = (100 * (distance / (far_away - approach_dist)) - base) + base
+            elif style == 1:
+                thrust = scale_factor * math.atan(stretch_factor * (distance - approach_dist)) + base
+            elif style == 2:
+                thrust = 75
+            elif style == 3:
+                thrust = 25
+            else:
+                thrust = (100 * (distance / (far_away - approach_dist)) - base) + base
+        else:
+            thrust = base
+        if 130 <= self.difference_angle(point) <= 230:
+            thrust = 20
+        return thrust
+
+    def autopilot(self, target, next_target, checkpoints, style=0):
+        target_point = self.autopilot_point(target, next_target)
+        theta = self.get_angle(target_point)
+        thrust = self.autopilot_thrust(target_point, style)
+        # Play the turn
+        #self.play(target_point, thrust, checkpoints)
+        return Move(target_point, theta, thrust)
+
+
 class Move:
-    def __init__(self, place):
+    def __init__(self, place, theta=0.0, speed=0):
         self.point: Point = place
-        self.thrust: int = 0
-        self.angle: float = 0.0
+        self.thrust: int = speed
+        self.angle: float = theta
         self.score: float = 0.0
+
+    def neighbor(self, amplitude):
+        ramin: float = self.angle - 36.0 * amplitude
+        ramax: float = self.angle + 36.0 * amplitude
+        if ramin < -18.0:
+            ramin = -18.0
+        if ramax > 18.0:
+            ramax = 18.0
+        self.angle = (ramax - ramin) * np.random.random() + ramin
+        pmin: int = self.thrust - 200 * amplitude
+        pmax: int = self.thrust + 200 * amplitude
+        if pmin < 0:
+            pmin = 0
+        if pmax > 0:
+            pmax = 200
+        self.thrust = (pmax - pmin) * np.random.random() + pmin
+        return self
 
 
 class Solution:
@@ -101,11 +309,14 @@ class Solution:
         self.moves_four: list = []
         self.scores: list = []
         self.moves: list = []
+        self.package_up()
 
     def package_up(self):
         self.scores = [self.score_one, self.score_two, self.score_three, self.score_four]
         self.moves = [self.moves_one, self.moves_two, self.moves_three, self.moves_four]
 
+    def score(self):
+        return
 
 class Collision:
     def __init__(self, unit1, unit2, t_factor):
@@ -130,7 +341,68 @@ def cost(solution):
     return solution.score()
 
 
-def anneal(solution):
+def create_turn(pod, target, next_target, checkpoints, style=0):
+    return pod.autopilot(target, next_target, checkpoints, style)
+
+
+def neighbor(solution, pods, checkpoints):
+    new_solution = Solution()
+    new_solution.moves_one[0] = solution.moves_one[0].neighbor(0.5)
+    new_solution.moves_two[0] = solution.moves_two[0].neighbor(0.5)
+    new_solution.moves_three[0] = solution.moves_three[0]
+    new_solution.moves_four[0] = solution.moves_four[0]
+    for i in range(1, len(solution.moves_one)):
+
+    return new_solution
+
+
+def determine_trajectory(pods, moves, checkpoints):
+    for j in range(len(pods)):
+        pods[j].rotate(moves[j].point)
+        pods[j].boost(moves[j].thrust)
+
+    return play_turn(pods, checkpoints)
+
+
+def play_turn(pod_list, checkpoints):
+    bug_found = False
+    fitness_results = []
+    t: float = 0.0
+    while t < 1.0:
+        first_collision = None
+        for j in range(len(pod_list)):
+            for k in range(j + 1, len(pod_list)):
+                collision = pod_list[j].collision(pod_list[k])
+                if (collision is not None) and (collision.time + t < 1.0) and (
+                        (first_collision is None) or (collision.time < first_collision.time)):
+                    first_collision = collision
+                    if bug_found:
+                        if first_collision.time <= 0:
+                            first_collision = None
+            collision = pod_list[j].collision(checkpoints[pod_list[j].next_target_id])
+            if (collision is not None) and (collision.time + t < 1.0) and (
+                    (first_collision is None) or (collision.time < first_collision.time)):
+                first_collision = collision
+                if bug_found:
+                    if first_collision.time <= 0:
+                        first_collision = None
+        if first_collision is None:
+            for j in range(len(pod_list)):
+                pod_list[j].move(1.0 - t)
+            t = 1.0
+        else:
+            for j in range(len(pod_list)):
+                pod_list[j].move(first_collision.time)
+            first_collision.unit_a.bounce(first_collision.unit_b)
+            bug_found = True
+            t += first_collision.time
+    for j in range(len(pod_list)):
+        fitness_results.append(pod_list[j].end(checkpoints))
+    return fitness_results
+
+
+def anneal(old_solution):
+    solution = old_solution
     old_cost = cost(solution)
     temperature = 1.0
     minimum_temperature = 0.00001
@@ -144,4 +416,70 @@ def anneal(solution):
                 solution = new_solution
                 old_cost = new_cost
             temperature = temperature * cooling_rate
-    return (solution, cost)
+    return solution, cost
+
+
+first_turn: bool = True
+targets = []
+
+# Auto-generated code below aims at helping you parse
+# the standard input according to the problem statement.
+
+laps: int = int(input())
+
+checkpoint_count: int = int(input())
+
+for i in range(checkpoint_count):
+    checkpoint_x, checkpoint_y = [int(j) for j in input().split()]
+    # Add the checkpoints to the targets list
+    targets.append(Checkpoint(checkpoint_x, checkpoint_y, i, 600, checkpoint_count))
+
+# game loop
+while True:
+    input_list = []
+    pods = []
+    pod_clones = []
+    enemies = []
+    enemy_clones = []
+    for i in range(2):
+        # x: x position of your pod
+        # y: y position of your pod
+        # vx: x speed of your pod
+        # vy: y speed of your pod
+        # angle: angle of your pod
+        # next_check_point_id: next check point id of your pod
+        x, y, vx, vy, angle, next_check_point_id = [int(j) for j in input().split()]
+        pod = Pod(x, y, vx, vy, angle, next_check_point_id, 400, checkpoint_count, laps)
+        pods.append(pod)
+
+    for i in range(2):
+        # x_2: x position of the opponent's pod
+        # y_2: y position of the opponent's pod
+        # vx_2: x speed of the opponent's pod
+        # vy_2: y speed of the opponent's pod
+        # angle_2: angle of the opponent's pod
+        # next_check_point_id_2: next check point id of the opponent's pod
+        x_2, y_2, vx_2, vy_2, angle_2, next_check_point_id_2 = [int(j) for j in input().split()]
+        pod = Pod(x_2, y_2, vx_2, vy_2, angle_2, next_check_point_id_2, 400, checkpoint_count, laps)
+        pods.append(pod)
+    pod_clones = pods
+
+    number_of_solutions = 100
+    number_of_turns = 5
+    for i in range(number_of_solutions):
+        solution = Solution()
+        for j in range(number_of_turns):
+            for p in range(len(pod_clones)):
+                # Get target id
+                if pod_clones[p].next_target_id + 1 == pod_clones[p].num_targets:
+                    next_target = 0
+                else:
+                    next_target = pod_clones[p].next_target_id + 1
+                # Create a turn then save it to the solution
+                solution.moves[p].append(create_turn(targets[pod_clones[p].next_target_id], targets[next_target],
+                                                     0, targets))
+            fitness_result = determine_trajectory(pod_clones, targets, [solution.moves[0][0], solution.moves[1][0],
+                                                                        solution.moves[2][0], solution.moves[3][0]])
+            # Get all the scores for the turn
+            for q in range(len(fitness_result)):
+                solution.scores[q].append(fitness_result[q])
