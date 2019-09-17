@@ -3,6 +3,7 @@ import math
 
 number_of_solutions = 100
 
+
 class Point:
     def __init__(self, x_in, y_in):
         self.x: float = x_in
@@ -82,25 +83,28 @@ class Checkpoint(Unit):
 
 class Move:
     def __init__(self, place):
-        position: Point = place
-        thrust: int = 0
-        angle: float = 0.0
-        score: float = 0.0
-
-    def score(self, final_place):
-        distance = self.position.distance(final_place)
+        self.point: Point = place
+        self.thrust: int = 0
+        self.angle: float = 0.0
+        self.score: float = 0.0
 
 
 class Solution:
     def __init__(self):
-        score_one: float = 0.0
-        score_two: float = 0.0
-        score_three: float = 0.0
-        score_four: float = 0.0
-        moves_one: list = []
-        moves_two: list = []
-        moves_three: list = []
-        moves_four: list = []
+        self.score_one: float = 0.0
+        self.score_two: float = 0.0
+        self.score_three: float = 0.0
+        self.score_four: float = 0.0
+        self.moves_one: list = []
+        self.moves_two: list = []
+        self.moves_three: list = []
+        self.moves_four: list = []
+        self.scores: list = []
+        self.moves: list = []
+
+    def package_up(self):
+        self.scores = [self.score_one, self.score_two, self.score_three, self.score_four]
+        self.moves = [self.moves_one, self.moves_two, self.moves_three, self.moves_four]
 
 
 class Collision:
@@ -114,7 +118,16 @@ def acceptance_probability(old, new, temp):
     return math.exp((new - old)/temp)
 
 
-def cost
+def cost(solution):
+    # Package up the moves and scores for looping through them
+    solution.package_up()
+    # Loop through all the lists of moves
+    for i in range(len(solution.moves)):
+        number_moves = len(solution.moves[i])
+        for j in range(number_moves):
+            # Score is weighted by how "deep" in the solution the move is
+            solution.scores[j] += ((number_moves - j)/number_moves) * solution.moves[i].score
+    return solution.score()
 
 
 def anneal(solution):
