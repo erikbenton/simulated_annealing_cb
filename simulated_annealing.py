@@ -31,13 +31,14 @@ class Point:
 
 
 class Unit(Point):
-    def __init__(self, x_in, y_in, vx_in, vy_in, id_in, radius_in, num_targets_in):
+    def __init__(self, x_in, y_in, vx_in, vy_in, id_in, radius_in, num_targets_in, name="N/A"):
         super(Unit, self).__init__(x_in, y_in)
         self.next_target_id: int = id_in
         self.radius: float = radius_in
         self.vx: float = vx_in
         self.vy: float = vy_in
         self.num_targets: int = num_targets_in
+        self.name: str = name
 
     def collision(self, unit):
         # print("Collision", file=sys.stderr)
@@ -82,8 +83,8 @@ class Checkpoint(Unit):
 
 
 class Pod(Unit):
-    def __init__(self, x_in, y_in, vx_in, vy_in, angle_in, id_in, radius_in, num_targets_in, laps_in):
-        super(Pod, self).__init__(x_in, y_in, vx_in, vy_in, id_in, radius_in, num_targets_in)
+    def __init__(self, x_in, y_in, vx_in, vy_in, angle_in, id_in, radius_in, num_targets_in, laps_in, name="N/A"):
+        super(Pod, self).__init__(x_in, y_in, vx_in, vy_in, id_in, radius_in, num_targets_in, name)
         self.angle: float = angle_in
         self.checkpoint = None
         self.checked: int = 0
@@ -215,7 +216,7 @@ class Pod(Unit):
         print(str(round(px)) + " " + str(round(py)) + " " + str(move.thrust))
         return
 
-    def autopilot_point(self, target, next_target):
+    def autopilot_point(self, target, next_target, radius=100):
         # Figure out the desired x & y
         # Set up vectors with the current target as the origin
         target_pod_x = self.x - target.x
@@ -231,8 +232,8 @@ class Pod(Unit):
         unscaled_desired_vect_x = target_pod_vect_mag * target_next_vect[0] + target_next_vect_mag * target_pod_vect[0]
         unscaled_desired_vect_y = target_pod_vect_mag * target_next_vect[1] + target_next_vect_mag * target_pod_vect[1]
         unscaled_desired_vect_theta = math.atan2(unscaled_desired_vect_y, unscaled_desired_vect_x)
-        desired_x = 300 * math.cos(unscaled_desired_vect_theta) + target.x
-        desired_y = 300 * math.sin(unscaled_desired_vect_theta) + target.y
+        desired_x = radius * math.cos(unscaled_desired_vect_theta) + target.x
+        desired_y = radius * math.sin(unscaled_desired_vect_theta) + target.y
         # Create point from desired x & y
         target_point = Point(self.x + desired_x - self.x - self.vx, self.y + desired_y - self.y - self.vy)
         return target_point
@@ -265,37 +266,54 @@ class Pod(Unit):
         return thrust
 
     def autopilot(self, target, next_target, checkpoints, style=0):
+        # Determine if on target
         target_point = self.autopilot_point(target, next_target)
         theta = self.get_angle(target_point)
+        print(str(self.name) + ", " + str(self.difference_angle(target_point)), file=sys.stderr)
         thrust = self.autopilot_thrust(target_point, style)
         # Play the turn
         # self.play(target_point, thrust, checkpoints)
-        return Move(target_point, theta, thrust)
+        return Move(Point(self.x, self.y), target_point, theta, thrust)
+
+    def on_target(self):
+
+        return
 
 
 class Move:
-    def __init__(self, place, theta=0.0, speed=0):
-        self.point: Point = place
+    def __init__(self, first_place, second_place, theta=0.0, speed=0):
+        self.point_one: Point = first_place
+        self.point_two: Point = second_place
         self.thrust: int = speed
         self.angle: float = theta
         self.score: float = 0.0
 
     def neighbor(self, amplitude):
-        ramin: float = self.angle - 36.0 * amplitude
-        ramax: float = self.angle + 36.0 * amplitude
+        ramin: float = -18.0 * np.random.random() * amplitude
+        ramax: float = 18.0 * np.random.random() * amplitude
         if ramin < -18.0:
             ramin = -18.0
         if ramax > 18.0:
             ramax = 18.0
         self.angle = (ramax - ramin) * np.random.random() + ramin
-        pmin: int = self.thrust - 200 * amplitude
-        pmax: int = self.thrust + 200 * amplitude
+        self.point_two = self.neighbor_point(self.angle)
+        pmin: int = self.thrust - 100 * amplitude
+        pmax: int = self.thrust + 100 * amplitude
         if pmin < 0:
             pmin = 0
         if pmax > 0:
             pmax = 200
         self.thrust = (pmax - pmin) * np.random.random() + pmin
         return self
+
+    def neighbor_point(self, angle):
+        # print(str(angle), file=sys.stderr)
+        dx = self.point_two.x - self.point_one.x
+        dy = self.point_two.y - self.point_one.y
+        # print(str(dx) + ", " + str(dy) + ", " + str(self.point_two.x + dx) + ", " + str(self.point_two.y + dy), file=sys.stderr)
+        x2 = np.cos(math.radians(angle)) * dx - np.sin(math.radians(angle)) * dy
+        y2 = np.sin(math.radians(angle)) * dx + np.cos(math.radians(angle)) * dy
+        return Point(self.point_one.x + x2, self.point_one.y + y2)
 
 
 class Solution:
@@ -319,11 +337,17 @@ class Solution:
     def score(self):
         sum_one = 0
         sum_two = 0
+        sum_three = 0
+        sum_four = 0
         for i in range(len(self.score_one)):
             sum_one += self.score_one[i]
         for i in range(len(self.score_two)):
             sum_two += self.score_two[i]
-        return (sum_one + sum_two) / 2
+        for i in range(len(self.score_three)):
+            sum_three += self.score_three[i]
+        for i in range(len(self.score_four)):
+            sum_four += self.score_four[i]
+        return 1 / (((sum_one + sum_two) / 2) - ((sum_three + sum_four) / 2))
 
 class Collision:
     def __init__(self, unit1, unit2, t_factor):
@@ -356,8 +380,8 @@ def create_turn(pod, target, next_target, checkpoints, style=0):
 def neighbor(solution, pods, targets):
     clones = pods
     new_solution = Solution()
-    new_solution.moves_one.append(solution.moves_one[0].neighbor(0.5))
-    new_solution.moves_two.append(solution.moves_two[0].neighbor(0.5))
+    new_solution.moves_one.append(solution.moves_one[0].neighbor(np.random.random()/2))
+    new_solution.moves_two.append(solution.moves_two[0].neighbor(np.random.random()/2))
     new_solution.moves_three.append(solution.moves_three[0])
     new_solution.moves_four.append(solution.moves_four[0])
     # Determine where all the pods end up for projected turn and their scores/fitness
@@ -388,7 +412,7 @@ def neighbor(solution, pods, targets):
 
 def determine_trajectory(pods, checkpoints, moves):
     for j in range(len(pods)):
-        pods[j].rotate(moves[j].point)
+        pods[j].rotate(moves[j].point_two)
         pods[j].boost(moves[j].thrust)
 
     return play_turn(pods, checkpoints)
@@ -479,7 +503,12 @@ while True:
         # angle: angle of your pod
         # next_check_point_id: next check point id of your pod
         x, y, vx, vy, angle, next_check_point_id = [int(j) for j in input().split()]
-        pod = Pod(x, y, vx, vy, angle, next_check_point_id, 400, checkpoint_count, laps)
+        if i == 0:
+            name = "Erik"
+        else:
+            name = "Greg"
+        pod = Pod(x, y, vx, vy, angle, next_check_point_id, 400, checkpoint_count, laps, name)
+
         pods.append(pod)
 
     for i in range(2):
@@ -490,8 +519,13 @@ while True:
         # angle_2: angle of the opponent's pod
         # next_check_point_id_2: next check point id of the opponent's pod
         x_2, y_2, vx_2, vy_2, angle_2, next_check_point_id_2 = [int(j) for j in input().split()]
-        pod = Pod(x_2, y_2, vx_2, vy_2, angle_2, next_check_point_id_2, 400, checkpoint_count, laps)
+        if i == 0:
+            name = "Darth"
+        else:
+            name = "Boss"
+        pod = Pod(x_2, y_2, vx_2, vy_2, angle_2, next_check_point_id_2, 400, checkpoint_count, laps, name)
         pods.append(pod)
+
     pod_clones = pods
 
     number_of_solutions = 25
@@ -518,13 +552,17 @@ while True:
         # Get all the scores for the turn
         for q in range(len(fitness_result)):
             solution.scores[q].append(fitness_result[q])
+    print((str(int(solution.moves_one[0].point_two.x)) + " " + str(int(solution.moves_one[0].point_two.y)) + " " +
+          str(int(solution.moves_one[0].thrust))), file=sys.stderr)
+    print((str(int(solution.moves_two[0].point_two.x)) + " " + str(int(solution.moves_two[0].point_two.y)) + " " +
+          str(int(solution.moves_two[0].thrust))), file=sys.stderr)
     # One solution has now been made, time to anneal it
     final_solution, final_cost = anneal(solution, pods, targets)
     if final_solution.moves_one[0].thrust > 100:
         final_solution.moves_one[0].thrust = 100
     if final_solution.moves_two[0].thrust > 100:
         final_solution.moves_two[0].thrust = 100
-    print(str(int(final_solution.moves_one[0].point.x)) + " " + str(int(final_solution.moves_one[0].point.y)) + " " +
+    print(str(int(final_solution.moves_one[0].point_two.x)) + " " + str(int(final_solution.moves_one[0].point_two.y)) + " " +
           str(int(final_solution.moves_one[0].thrust)))
-    print(str(int(final_solution.moves_two[0].point.x)) + " " + str(int(final_solution.moves_two[0].point.y)) + " " +
+    print(str(int(final_solution.moves_two[0].point_two.x)) + " " + str(int(final_solution.moves_two[0].point_two.y)) + " " +
           str(int(final_solution.moves_two[0].thrust)))
