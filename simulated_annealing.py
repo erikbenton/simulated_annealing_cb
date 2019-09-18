@@ -1,3 +1,4 @@
+import sys
 from random import random
 import math
 import numpy as np
@@ -268,7 +269,7 @@ class Pod(Unit):
         theta = self.get_angle(target_point)
         thrust = self.autopilot_thrust(target_point, style)
         # Play the turn
-        #self.play(target_point, thrust, checkpoints)
+        # self.play(target_point, thrust, checkpoints)
         return Move(target_point, theta, thrust)
 
 
@@ -299,10 +300,10 @@ class Move:
 
 class Solution:
     def __init__(self):
-        self.score_one: float = 0.0
-        self.score_two: float = 0.0
-        self.score_three: float = 0.0
-        self.score_four: float = 0.0
+        self.score_one: list = []
+        self.score_two: list = []
+        self.score_three: list = []
+        self.score_four: list = []
         self.moves_one: list = []
         self.moves_two: list = []
         self.moves_three: list = []
@@ -316,7 +317,13 @@ class Solution:
         self.moves = [self.moves_one, self.moves_two, self.moves_three, self.moves_four]
 
     def score(self):
-        return
+        sum_one = 0
+        sum_two = 0
+        for i in range(len(self.score_one)):
+            sum_one += self.score_one[i]
+        for i in range(len(self.score_two)):
+            sum_two += self.score_two[i]
+        return (sum_one + sum_two) / 2
 
 class Collision:
     def __init__(self, unit1, unit2, t_factor):
@@ -326,7 +333,8 @@ class Collision:
 
 
 def acceptance_probability(old, new, temp):
-    return math.exp((new - old)/temp)
+    # print(str(new) + ", " + str(old) + ", " + str(temp), file=sys.stderr)
+    return np.exp((new - old) / temp)
 
 
 def cost(solution):
@@ -337,7 +345,7 @@ def cost(solution):
         number_moves = len(solution.moves[i])
         for j in range(number_moves):
             # Score is weighted by how "deep" in the solution the move is
-            solution.scores[j] += ((number_moves - j)/number_moves) * solution.moves[i].score
+            solution.scores[i][j] += ((number_moves - j) / number_moves) * solution.moves[i][j].score
     return solution.score()
 
 
@@ -345,18 +353,40 @@ def create_turn(pod, target, next_target, checkpoints, style=0):
     return pod.autopilot(target, next_target, checkpoints, style)
 
 
-def neighbor(solution, pods, checkpoints):
+def neighbor(solution, pods, targets):
+    clones = pods
     new_solution = Solution()
-    new_solution.moves_one[0] = solution.moves_one[0].neighbor(0.5)
-    new_solution.moves_two[0] = solution.moves_two[0].neighbor(0.5)
-    new_solution.moves_three[0] = solution.moves_three[0]
-    new_solution.moves_four[0] = solution.moves_four[0]
+    new_solution.moves_one.append(solution.moves_one[0].neighbor(0.5))
+    new_solution.moves_two.append(solution.moves_two[0].neighbor(0.5))
+    new_solution.moves_three.append(solution.moves_three[0])
+    new_solution.moves_four.append(solution.moves_four[0])
+    # Determine where all the pods end up for projected turn and their scores/fitness
+    score_results = determine_trajectory(clones, targets, [new_solution.moves_one[0], new_solution.moves_two[0],
+                                                           new_solution.moves_three[0], new_solution.moves_four[0]])
+    # Get all the scores for the first turn
+    for q in range(len(score_results)):
+        new_solution.scores[q].append(score_results[q])
     for i in range(1, len(solution.moves_one)):
+        for p in range(len(clones)):
+            # Get target id
+            if clones[p].next_target_id + 1 == clones[p].num_targets:
+                next_target = 0
+            else:
+                next_target = clones[p].next_target_id + 1
+            # Create a turn then save it to the solution
+            new_solution.moves[p].append(create_turn(clones[p], targets[clones[p].next_target_id],
+                                                     targets[next_target], targets, 0))
+        # Determine where all the pods end up for projected turn and their scores/fitness
+        score_results = determine_trajectory(clones, targets, [new_solution.moves[0][0], new_solution.moves[1][0],
+                                                               new_solution.moves[2][0], new_solution.moves[3][0]])
+        # Get all the scores for the turn
+        for q in range(len(score_results)):
+            new_solution.scores[q].append(score_results[q])
 
     return new_solution
 
 
-def determine_trajectory(pods, moves, checkpoints):
+def determine_trajectory(pods, checkpoints, moves):
     for j in range(len(pods)):
         pods[j].rotate(moves[j].point)
         pods[j].boost(moves[j].thrust)
@@ -401,20 +431,20 @@ def play_turn(pod_list, checkpoints):
     return fitness_results
 
 
-def anneal(old_solution):
-    solution = old_solution
-    old_cost = cost(solution)
+def anneal(old_solution, pods, checkpoints):
+    current_solution = old_solution
+    current_cost = cost(current_solution)
     temperature = 1.0
-    minimum_temperature = 0.00001
+    minimum_temperature = 0.01
     cooling_rate = 0.9
     while temperature > minimum_temperature:
         for i in range(number_of_solutions):
-            new_solution = neighbor(solution)
+            new_solution = neighbor(current_solution, pods, checkpoints)
             new_cost = cost(new_solution)
-            acceptance = acceptance_probability(old_cost, new_cost, temperature)
+            acceptance = acceptance_probability(current_cost, new_cost, temperature)
             if acceptance > random():
-                solution = new_solution
-                old_cost = new_cost
+                current_solution = new_solution
+                current_cost = new_cost
             temperature = temperature * cooling_rate
     return solution, cost
 
@@ -464,22 +494,37 @@ while True:
         pods.append(pod)
     pod_clones = pods
 
-    number_of_solutions = 100
+    number_of_solutions = 25
     number_of_turns = 5
-    for i in range(number_of_solutions):
-        solution = Solution()
-        for j in range(number_of_turns):
-            for p in range(len(pod_clones)):
-                # Get target id
-                if pod_clones[p].next_target_id + 1 == pod_clones[p].num_targets:
-                    next_target = 0
-                else:
-                    next_target = pod_clones[p].next_target_id + 1
-                # Create a turn then save it to the solution
-                solution.moves[p].append(create_turn(targets[pod_clones[p].next_target_id], targets[next_target],
-                                                     0, targets))
-            fitness_result = determine_trajectory(pod_clones, targets, [solution.moves[0][0], solution.moves[1][0],
-                                                                        solution.moves[2][0], solution.moves[3][0]])
-            # Get all the scores for the turn
-            for q in range(len(fitness_result)):
-                solution.scores[q].append(fitness_result[q])
+    # for i in range(number_of_solutions):
+    # Create initial solution to begin annealing process
+    solution = Solution()
+
+    # Create moves using autopilot
+    for j in range(number_of_turns):
+        for p in range(len(pod_clones)):
+            # Get target id
+            if pod_clones[p].next_target_id + 1 == pod_clones[p].num_targets:
+                next_target = 0
+            else:
+                next_target = pod_clones[p].next_target_id + 1
+            # Create a turn then save it to the solution
+            # create_turn(pod, target, next_target, checkpoints, style=0)
+            solution.moves[p].append(create_turn(pod_clones[p], targets[pod_clones[p].next_target_id],
+                                                 targets[next_target], targets, 0))
+        # Determine where all the pods end up for projected turn and their scores/fitness
+        fitness_result = determine_trajectory(pod_clones, targets, [solution.moves[0][0], solution.moves[1][0],
+                                                                    solution.moves[2][0], solution.moves[3][0]])
+        # Get all the scores for the turn
+        for q in range(len(fitness_result)):
+            solution.scores[q].append(fitness_result[q])
+    # One solution has now been made, time to anneal it
+    final_solution, final_cost = anneal(solution, pods, targets)
+    if final_solution.moves_one[0].thrust > 100:
+        final_solution.moves_one[0].thrust = 100
+    if final_solution.moves_two[0].thrust > 100:
+        final_solution.moves_two[0].thrust = 100
+    print(str(int(final_solution.moves_one[0].point.x)) + " " + str(int(final_solution.moves_one[0].point.y)) + " " +
+          str(int(final_solution.moves_one[0].thrust)))
+    print(str(int(final_solution.moves_two[0].point.x)) + " " + str(int(final_solution.moves_two[0].point.y)) + " " +
+          str(int(final_solution.moves_two[0].thrust)))
