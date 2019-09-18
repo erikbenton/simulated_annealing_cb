@@ -113,7 +113,7 @@ class Pod(Unit):
     def difference_angle(self, point):
         theta = self.get_angle(point)
         right = self.angle - theta if self.angle <= theta else 360.0 - self.angle + theta
-        left = self.angle - theta if self.angle <= theta else self.angle + 360.0 - theta
+        left = self.angle - theta if self.angle >= theta else self.angle + 360.0 - theta
         if right < left:
             return right
         else:
@@ -267,17 +267,30 @@ class Pod(Unit):
 
     def autopilot(self, target, next_target, checkpoints, style=0):
         # Determine if on target
+        turning_theta = self.on_target(target)
+        if turning_theta <= 18:
+            print(str(self.name) + ", " + str(turning_theta), file=sys.stderr)
         target_point = self.autopilot_point(target, next_target)
         theta = self.get_angle(target_point)
-        print(str(self.name) + ", " + str(self.difference_angle(target_point)), file=sys.stderr)
+        # print(str(self.name) + ", " + str(self.difference_angle(target_point)), file=sys.stderr)
         thrust = self.autopilot_thrust(target_point, style)
         # Play the turn
         # self.play(target_point, thrust, checkpoints)
         return Move(Point(self.x, self.y), target_point, theta, thrust)
 
-    def on_target(self):
-
-        return
+    def on_target(self, target):
+        # Get the displacements from the next target
+        x_diff = target.x - self.x
+        y_diff = target.y - self.y
+        # Set up vectors for math
+        a = [self.vx, self.vy]
+        b = [x_diff, y_diff]
+        velocity_point = Point(self.x + self.vx, self.y + self.vy)
+        # Angle between pod velocity and current target
+        turning_theta = math.degrees(math.acos(np.inner(a, b) /
+                                               (self.distance(target) * self.distance(velocity_point))))
+        # print(str(self.name) + ", " + str(turning_theta), file=sys.stderr)
+        return turning_theta
 
 
 class Move:
@@ -456,6 +469,7 @@ def play_turn(pod_list, checkpoints):
 
 
 def anneal(old_solution, pods, checkpoints):
+    # pods[0].on_target(Point(0, 0))
     current_solution = old_solution
     current_cost = cost(current_solution)
     temperature = 1.0
@@ -503,10 +517,7 @@ while True:
         # angle: angle of your pod
         # next_check_point_id: next check point id of your pod
         x, y, vx, vy, angle, next_check_point_id = [int(j) for j in input().split()]
-        if i == 0:
-            name = "Erik"
-        else:
-            name = "Greg"
+        name = "Erik" if i == 0 else "Greg"
         pod = Pod(x, y, vx, vy, angle, next_check_point_id, 400, checkpoint_count, laps, name)
 
         pods.append(pod)
@@ -519,10 +530,7 @@ while True:
         # angle_2: angle of the opponent's pod
         # next_check_point_id_2: next check point id of the opponent's pod
         x_2, y_2, vx_2, vy_2, angle_2, next_check_point_id_2 = [int(j) for j in input().split()]
-        if i == 0:
-            name = "Darth"
-        else:
-            name = "Boss"
+        name = "Darth" if i == 0 else "Boss"
         pod = Pod(x_2, y_2, vx_2, vy_2, angle_2, next_check_point_id_2, 400, checkpoint_count, laps, name)
         pods.append(pod)
 
